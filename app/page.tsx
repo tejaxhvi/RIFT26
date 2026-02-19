@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { FixesTable } from "@/app/components/dashboard/FixesTable";
 
 // We define the shape of our mock backend response here
 type AgentData = {
@@ -182,7 +183,15 @@ export default function Dashboard() {
               <CardTitle>Fixes Applied</CardTitle>
             </CardHeader>
             <CardContent className="flex items-center justify-center text-muted-foreground">
-              Table data will populate here next...
+              <Card className="min-h-[400px]">
+         <CardHeader>
+           <CardTitle>Fixes Applied</CardTitle>
+         </CardHeader>
+         <CardContent>
+           {/* Pass the fixes array from our state to the table! */}
+           <FixesTable fixes={agentData?.fixes || []} />
+         </CardContent>
+       </Card>
             </CardContent>
           </Card>
         </div>
