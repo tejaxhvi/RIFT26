@@ -1,65 +1,193 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { Play, Activity } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+
+// We define the shape of our mock backend response here
+type AgentData = {
+  status: string;
+  summary: {
+    repoUrl: string;
+    teamName: string;
+    leaderName: string;
+    branchName: string;
+    totalFailures: number;
+    totalFixes: number;
+    timeTaken: string;
+  };
+  score: {
+    base: number;
+    speedBonus: number;
+    efficiencyPenalty: number;
+    final: number;
+  };
+  fixes: Array<{
+    id: number;
+    file: string;
+    type: string;
+    line: number;
+    commit: string;
+    status: string;
+  }>;
+};
+
+export default function Dashboard() {
+  const [repoUrl, setRepoUrl] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [leaderName, setLeaderName] = useState("");
+  
+  const [isRunning, setIsRunning] = useState(false);
+  const [agentData, setAgentData] = useState<AgentData | null>(null);
+
+  const handleRunAgent = async () => {
+    setIsRunning(true);
+    setAgentData(null); // Clear previous results when running again
+    
+    try {
+      const response = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoUrl, teamName, leaderName }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to run agent");
+      }
+
+      // Save the backend JSON into our React state!
+      setAgentData(data);
+      
+    } catch (error) {
+      console.error("Agent run failed:", error);
+      alert("Error: Please make sure all fields are filled.");
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between border-b pb-4">
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <Activity className="h-8 w-8 text-primary" />
+          Omniscient Agent
+        </h1>
+        <Badge variant={agentData?.status === "PASSED" ? "default" : "outline"} className="text-sm">
+          Status: {isRunning ? "Running..." : agentData?.status || "Idle"}
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+        
+        {/* Left Column: Input Controller */}
+        <div className="md:col-span-4 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Agent Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">GitHub URL</label>
+                <Input 
+                  placeholder="https://github.com/user/repo" 
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Team Name</label>
+                <Input 
+                  placeholder="e.g., RIFT ORGANISERS" 
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Team Leader</label>
+                <Input 
+                  placeholder="e.g., Saiyam Kumar" 
+                  value={leaderName}
+                  onChange={(e) => setLeaderName(e.target.value)}
+                />
+              </div>
+              <Button 
+                className="w-full" 
+                size="lg" 
+                onClick={handleRunAgent}
+                disabled={isRunning}
+              >
+                <Play className="mr-2 h-4 w-4" />
+                {isRunning ? "Agent Running..." : "Run Agent"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="min-h-[300px]">
+             <CardHeader>
+                <CardTitle className="text-sm text-muted-foreground">CI/CD Timeline</CardTitle>
+             </CardHeader>
+             <CardContent className="flex items-center justify-center text-muted-foreground text-sm h-full">
+                Timeline will appear here after execution...
+             </CardContent>
+          </Card>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Right Column: Dynamic Metrics & Results */}
+        <div className="md:col-span-8 space-y-6">
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Dynamic Run Summary Card */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Run Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {agentData ? `${agentData.summary.totalFixes} Fixes Applied` : "Waiting for input"}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Branch: {agentData ? agentData.summary.branchName : "N/A"}
+                </p>
+                {agentData && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Time Taken: {agentData.summary.timeTaken}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Dynamic Score Card */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Agent Score</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {agentData ? `${agentData.score.final} / 100` : "0 / 100"}
+                </div>
+                <Progress value={agentData ? agentData.score.final : 0} className="mt-3" />
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="min-h-[400px]">
+            <CardHeader>
+              <CardTitle>Fixes Applied</CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-center justify-center text-muted-foreground">
+              Table data will populate here next...
+            </CardContent>
+          </Card>
         </div>
-      </main>
-    </div>
+
+      </div>
+    </main>
   );
 }
