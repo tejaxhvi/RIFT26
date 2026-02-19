@@ -4,73 +4,84 @@ import simpleGit, { SimpleGit } from "simple-git";
 import fs from "fs/promises";
 import path from "path";
 
-// Promisify exec so we can use async/await instead of callbacks
 const execAsync = promisify(exec);
 
-/**
- * 1. Clones the repository into a temporary directory
- */
+// 1. Clones to your local ./tmp folder
 export async function cloneRepository(repoUrl: string, teamName: string): Promise<string> {
   const timestamp = Date.now();
-  // Create a unique folder in the system's temp directory
   const clonePath = path.join(process.cwd(), "tmp", `${teamName.replace(/\s+/g, "_")}_${timestamp}`);
-  
-  // Ensure the tmp directory exists
   await fs.mkdir(clonePath, { recursive: true });
 
   const git: SimpleGit = simpleGit();
-  console.log(`Cloning ${repoUrl} into ${clonePath}...`);
+  console.log(`Cloning ${repoUrl} locally into ${clonePath}...`);
   await git.clone(repoUrl, clonePath);
   
   return clonePath;
 }
 
-/**
- * 2. Runs the test suite and captures the output
- */
-export async function runTests(repoPath: string): Promise<{ passed: boolean; output: string }> {
+// 2. 🆕 Cross-platform File Scanner for the Analyzer LLM
+export async function getRepoStructure(dir: string, depth = 0, maxDepth = 4): Promise<string> {
+  if (depth > maxDepth) return "";
+  let structure = "";
+  
   try {
-    console.log("Installing dependencies...");
-    await execAsync("npm install", { cwd: repoPath });
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      // Ignore heavy dependencies so we don't blow up the LLM context window
+      if ([".git", "node_modules", "venv", "__pycache__", ".next"].includes(entry.name)) continue;
+      
+      const prefix = "  ".repeat(depth) + "|-- ";
+      structure += prefix + entry.name + "\n";
+      
+      if (entry.isDirectory()) {
+        structure += await getRepoStructure(path.join(dir, entry.name), depth + 1, maxDepth);
+      }
+    }
+  } catch (err) {
+    console.error("Error reading directory structure:", err);
+  }
+  
+  return structure;
+}
 
-    console.log("Running tests...");
-    // Force tests to run in CI mode so they don't hang waiting for user input
-    const { stdout, stderr } = await execAsync("npm test", { 
+// 3. 🔄 Dynamic Executor (Runs whatever the Analyzer tells it to)
+export async function runTests(repoPath: string, installCmd: string, testCmd: string): Promise<{ passed: boolean; output: string }> {
+  try {
+    if (installCmd && installCmd.toLowerCase() !== "none") {
+      console.log(`Installing dependencies: ${installCmd}`);
+      await execAsync(installCmd, { cwd: repoPath });
+    }
+
+    console.log(`Running tests: ${testCmd}`);
+    const { stdout, stderr } = await execAsync(testCmd, { 
       cwd: repoPath,
       env: { ...process.env, CI: "true" } 
     });
     
     return { passed: true, output: stdout };
   } catch (error: any) {
-    // child_process throws an error if the exit code is not 0 (which happens when tests fail)
     return { 
       passed: false, 
-      output: error.stdout + "\n" + error.stderr 
+      output: (error.stdout || "") + "\n" + (error.stderr || "") 
     };
   }
 }
 
-/**
- * 3. Applies the code fix written by the LLM
- */
+// 4. Applies the fix to the exact local file
 export async function applyFix(repoPath: string, filePath: string, newCode: string): Promise<void> {
-  const fullPath = path.join(repoPath, filePath);
+  // Normalizes the path in case the LLM tries to add a leading slash or uses wrong slashes
+  const normalizedFilePath = filePath.replace(/\\/g, '/').replace(/^\/?repo\//, '').replace(/^\.\//, '');
+  const fullPath = path.join(repoPath, normalizedFilePath);
+  
   await fs.writeFile(fullPath, newCode, "utf-8");
-  console.log(`Overwrote ${filePath} with LLM fix.`);
+  console.log(`Overwrote ${normalizedFilePath} with LLM fix.`);
 }
 
-/**
- * 4. Commits the changes and pushes to a new branch
- */
+// 5. Commits locally
 export async function commitAndPush(repoPath: string, branchName: string): Promise<void> {
   const git: SimpleGit = simpleGit(repoPath);
-  
+  console.log(`Committing fixes to local branch: ${branchName}`);
   await git.checkoutLocalBranch(branchName);
   await git.add("./*");
-  await git.commit("[AI-AGENT] Applied automated fixes");
-  
-  // Note: Pushing requires authenticated URL in a real scenario. 
-  // For a hackathon demo, you can leave the push out if you just want to show the local diff,
-  // or ensure the repoUrl has a GitHub Personal Access Token injected.
-  console.log(`Committed fixes to branch: ${branchName}`);
+  await git.commit("Omniscient Applied automated fixes");
 }

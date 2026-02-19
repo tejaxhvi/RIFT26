@@ -1,60 +1,50 @@
 import { NextResponse } from "next/server";
-import { agentRunner } from "@/app/lib/agentGraph"; // Adjust path if necessary
+import { agentRunner } from "@/app/lib/agentGraph";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { repoUrl, teamName, leaderName } = body;
 
-    // Basic validation
     if (!repoUrl || !teamName || !leaderName) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // 1. Start the timer for the Hackathon Speed Bonus
     const startTime = Date.now();
     console.log(`Starting autonomous agent workflow for ${repoUrl}...`);
 
-    // 2. Invoke the actual LangGraph Agent!
     const finalState = await agentRunner.invoke({
       repoUrl,
       teamName,
       leaderName,
     });
 
-    // 3. Stop the timer and format the duration
     const endTime = Date.now();
     const timeTakenSeconds = Math.floor((endTime - startTime) / 1000);
     const minutes = Math.floor(timeTakenSeconds / 60);
     const seconds = timeTakenSeconds % 60;
 
-    // 4. Calculate Hackathon Gamification Metrics
     const totalFixes = finalState.fixes?.length || 0;
-    
-    // We assume total failures was at least the number of fixes it had to make.
-    // If it still failed at the end, we add 1 to show there's an unresolved issue.
     const totalFailures = totalFixes + (finalState.finalStatus === "FAILED" ? 1 : 0); 
     
+    // 🆕 Detect if the Analyzer determined there were no tests
+    const noTestsFound = finalState.testCmd?.toLowerCase().includes("no test") || 
+                         finalState.testCmd?.toLowerCase().includes("none") ||
+                         finalState.testScore === 0;
+
     let baseScore = 100;
-    // Speed bonus: +10 if under 5 minutes (300 seconds)
     let speedBonus = timeTakenSeconds < 300 ? 10 : 0; 
-    // Efficiency penalty: -2 for every commit/fix over 20
     let efficiencyPenalty = totalFixes > 20 ? (totalFixes - 20) * 2 : 0;
     
-    // Major penalty if the agent couldn't solve it after max retries
-    if (finalState.finalStatus === "FAILED") {
-      baseScore -= 50; 
-    }
+    if (finalState.finalStatus === "FAILED") baseScore -= 50; 
+    if (noTestsFound) baseScore -= 80; // Huge penalty for pushing code without tests!
 
-    const finalScore = baseScore + speedBonus - efficiencyPenalty;
+    const finalScore = Math.max(0, baseScore + speedBonus - efficiencyPenalty);
     const branchName = `${teamName.replace(/\s+/g, "_")}_${leaderName.replace(/\s+/g, "_")}_AI_Fix`;
 
-    // 5. Construct the genuine payload for the React Dashboard
     const genuineResult = {
-      status: finalState.finalStatus || "FAILED",
+      // 🆕 Custom status for the frontend badge
+      status: noTestsFound ? "NO_TESTS" : (finalState.finalStatus || "FAILED"),
       summary: {
         repoUrl,
         teamName,
@@ -63,6 +53,12 @@ export async function POST(request: Request) {
         totalFailures,
         totalFixes,
         timeTaken: `${minutes}m ${seconds}s`,
+      },
+      // 🆕 Package the Analyzer's report for the React UI
+      analysis: {
+        installCmd: finalState.installCmd || "N/A",
+        testCmd: finalState.testCmd || "N/A",
+        testCoverageScore: finalState.testScore || 0,
       },
       score: {
         base: baseScore,
@@ -76,9 +72,9 @@ export async function POST(request: Request) {
     return NextResponse.json(genuineResult, { status: 200 });
 
   } catch (error: any) {
-    console.error("Agent execution critically failed:", error);
+    console.error("Agent execution failed:", error);
     return NextResponse.json(
-      { error: error.message || "Internal Server Error in Agent Workflow" },
+      { error: error.message || "Internal Server Error" },
       { status: 500 }
     );
   }

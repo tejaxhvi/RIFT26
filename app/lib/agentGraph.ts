@@ -1,131 +1,138 @@
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { ChatGroq } from "@langchain/groq";
 import { z } from "zod";
-import { cloneRepository, runTests, applyFix, commitAndPush } from "./agentTools";
-import fs from "fs/promises";
-import path from "path";
+import { cloneRepository, getRepoStructure, runTests, applyFix, commitAndPush } from "./agentTools";
+import { FixRecord } from "../components/dashboard/FixesTable";
 
-// 1. Define the Agent's Memory (State)
+// 1. Expanded State Memory
 const AgentState = Annotation.Root({
-    repoUrl: Annotation<string>(),
-    teamName: Annotation<string>(),
-    leaderName: Annotation<string>(),
-    repoPath: Annotation<string>(),
-    errorLog: Annotation<string>(),
-    fixes: Annotation<any[]>({
-        reducer: (curr, update) => curr.concat(update),
-        default: () => [],
-    }),
-    iterations: Annotation<number>({
-        reducer: (curr, update) => curr + update,
-        default: () => 0,
-    }),
-    finalStatus: Annotation<string>(),
+  repoUrl: Annotation<string>(),
+  teamName: Annotation<string>(),
+  leaderName: Annotation<string>(),
+  repoPath: Annotation<string>(),
+  repoStructure: Annotation<string>(), // Added to memory
+  installCmd: Annotation<string>(),    // Added to memory
+  testCmd: Annotation<string>(),       // Added to memory
+  testScore: Annotation<number>(),     // Added to memory
+  errorLog: Annotation<string>(),
+  fixes: Annotation<FixRecord[]>({ reducer: (curr, update) => curr.concat(update), default: () => [] }),
+  iterations: Annotation<number>({ reducer: (curr, update) => curr + update, default: () => 0 }),
+  finalStatus: Annotation<string>(),
 });
 
-// 2. Initialize Groq with Structured Output
 const llm = new ChatGroq({
-    apiKey: process.env.GROQ_API_KEY,
-    model: "meta-llama/llama-4-scout-17b-16e-instruct", // 70B is smart enough for code, and Groq makes it blazing fast
-    temperature: 0,
+  apiKey: process.env.GROQ_API_KEY,
+  model: "meta-llama/llama-4-scout-17b-16e-instruct", 
+  temperature: 0,
 });
 
-// We force Groq to return JSON in this exact format so our Node.js tools can use it
+// 2. The Analyzer Schema
+const AnalyzeSchema = z.object({
+  language: z.string().describe("Primary programming language (e.g., Python, Node, Go)"),
+  installCmd: z.string().describe("Command to install dependencies. Use 'none' if none needed."),
+  testCmd: z.string().describe("Command to run tests (e.g., 'pytest', 'npm test'). Use 'echo No tests found' if none exist."),
+  testScore: z.number().describe("Score 0-100 evaluating test coverage based on file presence.")
+});
+const analyzeLlm = llm.withStructuredOutput(AnalyzeSchema, { name: "analyze_repo" });
+
+// 3. The Fixer Schema
 const FixSchema = z.object({
-    file: z.string().describe("The relative path of the file to fix (e.g., src/index.js)"),
-    newCode: z.string().describe("The complete, fully corrected code for the file"),
-    bugType: z.enum(["LINTING", "SYNTAX", "LOGIC", "TYPE_ERROR", "IMPORT", "INDENTATION"]),
-    line: z.number().describe("The approximate line number where the bug was found"),
-    commitMsg: z.string().describe("A short commit message starting with [AI-AGENT]"),
+  file: z.string().describe("The exact relative file path from the repository root"),
+  newCode: z.string(),
+  bugType: z.enum(["LINTING", "SYNTAX", "LOGIC", "TYPE_ERROR", "IMPORT", "INDENTATION"]),
+  line: z.number(),
+  commitMsg: z.string(),
 });
-
 const structuredLlm = llm.withStructuredOutput(FixSchema, { name: "generate_fix" });
 
-// 3. Define the Graph Nodes (The Steps)
-
+// 4. Graph Nodes
 async function setupNode(state: typeof AgentState.State) {
-    const repoPath = await cloneRepository(state.repoUrl, state.teamName);
-    return { repoPath };
+  const repoPath = await cloneRepository(state.repoUrl, state.teamName);
+  return { repoPath };
+}
+
+// 🆕 The New Analyzer Agent
+async function analyzeNode(state: typeof AgentState.State) {
+  console.log("Analyzing repository structure...");
+  const structure = await getRepoStructure(state.repoPath);
+  
+  const prompt = `You are an expert DevOps Architect. Look at the following file structure for a cloned repository:
+  \n${structure}\n
+  Determine the primary language, the exact terminal command to install dependencies, and the exact command to run the test suite. 
+  Evaluate the test quality (score 0-100).
+  
+  CRITICAL INSTRUCTION: You MUST respond by calling the provided structured output tool. DO NOT output any conversational text, explanations, or preamble. Just output the structured data.`;
+
+  const analysis = await analyzeLlm.invoke(prompt);
+  console.log(`[Analyzer] Language: ${analysis.language} | Test Cmd: ${analysis.testCmd}`);
+  
+  return { 
+    repoStructure: structure,
+    installCmd: analysis.installCmd,
+    testCmd: analysis.testCmd,
+    testScore: analysis.testScore
+  };
 }
 
 async function testNode(state: typeof AgentState.State) {
-    const testResult = await runTests(state.repoPath);
-
-    if (testResult.passed) {
-        return { finalStatus: "PASSED", errorLog: "" };
-    } else {
-        return { finalStatus: "FAILED", errorLog: testResult.output, iterations: 1 };
-    }
+  const testResult = await runTests(state.repoPath, state.installCmd, state.testCmd);
+  
+  if (testResult.passed) {
+    return { finalStatus: "PASSED", errorLog: "" };
+  } else {
+    return { finalStatus: "FAILED", errorLog: testResult.output, iterations: 1 };
+  }
 }
 
 async function fixNode(state: typeof AgentState.State) {
-    console.log(`Analyzing failure (Iteration ${state.iterations})...`);
-
-    // Create the prompt containing the error logs
-    const prompt = `
+  console.log(`Analyzing failure (Iteration ${state.iterations})...`);
+  
+  const prompt = `
     You are an expert autonomous CI/CD DevOps Agent. 
-    The following test suite failed. Read the error logs and determine the exact file that needs fixing.
-    Provide the entirely rewritten, corrected code.
+    The test suite failed. Here is the exact directory structure of the repository:
+    \n${state.repoStructure}\n
     
-    ERROR LOGS:
-    ${state.errorLog}
+    Here are the ERROR LOGS:
+    \n${state.errorLog}\n
+    
+    Determine the EXACT file from the directory structure that caused the error. Rewrite the completely corrected code for that specific file.
+    
+    CRITICAL INSTRUCTION: You MUST respond strictly by calling the provided structured output tool. DO NOT output any thinking process, conversational text, markdown formatting, or preamble like "To solve this task...". Just output the tool call.
   `;
 
-    // Call Groq
-    const fixDecision = await structuredLlm.invoke(prompt);
+  const fixDecision = await structuredLlm.invoke(prompt);
+  await applyFix(state.repoPath, fixDecision.file, fixDecision.newCode);
 
-    // Apply the fix using the tools we built in Step 1
-    await applyFix(state.repoPath, fixDecision.file, fixDecision.newCode);
-
-    // Format the fix record for the React Dashboard table
-    const newFixRecord = {
-        id: Date.now(),
-        file: fixDecision.file,
-        type: fixDecision.bugType,
-        line: fixDecision.line,
-        commit: fixDecision.commitMsg,
-        status: "Fixed"
-    };
-
-    return { fixes: [newFixRecord] };
+  return { 
+    fixes: [{ id: Date.now(), file: fixDecision.file, type: fixDecision.bugType, line: fixDecision.line, commit: fixDecision.commitMsg, status: "Fixed" }] 
+  };
 }
 
-// 4. Define the Routing Logic
 function shouldContinue(state: typeof AgentState.State) {
-    // If tests passed, stop.
-    if (state.finalStatus === "PASSED") return "commitNode";
-
-    // If we've tried 3 times and it's still failing, stop to prevent infinite loops (Hackathon survival tactic!)
-    if (state.iterations >= 3) return "commitNode";
-
-    // Otherwise, loop back to the fix node
-    return "fixNode";
+  if (state.finalStatus === "PASSED") return "commitNode";
+  if (state.iterations >= 3) return "commitNode"; 
+  return "fixNode";
 }
 
 async function commitNode(state: typeof AgentState.State) {
-    const branchName = `${state.teamName.replace(/\s+/g, "_")}_${state.leaderName.replace(/\s+/g, "_")}_AI_Fix`;
-    await commitAndPush(state.repoPath, branchName);
-    return { finalStatus: state.finalStatus }; // Keep the final status (PASSED or FAILED)
+  const branchName = `${state.teamName.replace(/\s+/g, "_")}_${state.leaderName.replace(/\s+/g, "_")}_AI_Fix`;
+  await commitAndPush(state.repoPath, branchName);
+  return { finalStatus: state.finalStatus };
 }
 
-// 5. Compile the Graph
+// 5. Compile the Workflow
 const workflow = new StateGraph(AgentState)
-    .addNode("setup", setupNode)
-    .addNode("test", testNode)
-    .addNode("fix", fixNode)
-    .addNode("commitNode", commitNode)
-
-    .addEdge(START, "setup")
-    .addEdge("setup", "test")
-
-    // Conditional routing after testing
-    .addConditionalEdges("test", shouldContinue, {
-        commitNode: "commitNode",
-        fixNode: "fix",
-    })
-
-    // After applying a fix, always run tests again to verify
-    .addEdge("fix", "test")
-    .addEdge("commitNode", END);
+  .addNode("setup", setupNode)
+  .addNode("analyze", analyzeNode) 
+  .addNode("test", testNode)
+  .addNode("fix", fixNode)
+  .addNode("commitNode", commitNode)
+  
+  .addEdge(START, "setup")
+  .addEdge("setup", "analyze")     
+  .addEdge("analyze", "test")      
+  .addConditionalEdges("test", shouldContinue, { commitNode: "commitNode", fixNode: "fix" })
+  .addEdge("fix", "test")
+  .addEdge("commitNode", END);
 
 export const agentRunner = workflow.compile();
