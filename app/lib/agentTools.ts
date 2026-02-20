@@ -15,7 +15,7 @@ export async function cloneRepository(repoUrl: string, teamName: string): Promis
   const git: SimpleGit = simpleGit();
   console.log(`Cloning ${repoUrl} locally into ${clonePath}...`);
   await git.clone(repoUrl, clonePath);
-  
+
   return clonePath;
 }
 
@@ -23,16 +23,16 @@ export async function cloneRepository(repoUrl: string, teamName: string): Promis
 export async function getRepoStructure(dir: string, depth = 0, maxDepth = 4): Promise<string> {
   if (depth > maxDepth) return "";
   let structure = "";
-  
+
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       // Ignore heavy dependencies so we don't blow up the LLM context window
       if ([".git", "node_modules", "venv", "__pycache__", ".next"].includes(entry.name)) continue;
-      
+
       const prefix = "  ".repeat(depth) + "|-- ";
       structure += prefix + entry.name + "\n";
-      
+
       if (entry.isDirectory()) {
         structure += await getRepoStructure(path.join(dir, entry.name), depth + 1, maxDepth);
       }
@@ -40,7 +40,7 @@ export async function getRepoStructure(dir: string, depth = 0, maxDepth = 4): Pr
   } catch (err) {
     console.error("Error reading directory structure:", err);
   }
-  
+
   return structure;
 }
 
@@ -53,16 +53,16 @@ export async function runTests(repoPath: string, installCmd: string, testCmd: st
     }
 
     console.log(`Running tests: ${testCmd}`);
-    const { stdout, stderr } = await execAsync(testCmd, { 
+    const { stdout, stderr } = await execAsync(testCmd, {
       cwd: repoPath,
-      env: { ...process.env, CI: "true" } 
+      env: { ...process.env, CI: "true" }
     });
-    
+
     return { passed: true, output: stdout };
   } catch (error: any) {
-    return { 
-      passed: false, 
-      output: (error.stdout || "") + "\n" + (error.stderr || "") 
+    return {
+      passed: false,
+      output: (error.stdout || "") + "\n" + (error.stderr || "")
     };
   }
 }
@@ -72,16 +72,25 @@ export async function applyFix(repoPath: string, filePath: string, newCode: stri
   // Normalizes the path in case the LLM tries to add a leading slash or uses wrong slashes
   const normalizedFilePath = filePath.replace(/\\/g, '/').replace(/^\/?repo\//, '').replace(/^\.\//, '');
   const fullPath = path.join(repoPath, normalizedFilePath);
-  
+
   await fs.writeFile(fullPath, newCode, "utf-8");
   console.log(`Overwrote ${normalizedFilePath} with LLM fix.`);
 }
 
-// 5. Commits locally
-export async function commitAndPush(repoPath: string, branchName: string): Promise<void> {
+// 5. Commits and pushes to GitHub from the cloned tmp folder
+export async function commitAndPush(repoUrl: string, repoPath: string, branchName: string): Promise<void> {
   const git: SimpleGit = simpleGit(repoPath);
-  console.log(`Committing fixes to local branch: ${branchName}`);
+  console.log(`Committing fixes in ${repoPath} to branch: ${branchName}`);
+
   await git.checkoutLocalBranch(branchName);
   await git.add("./*");
-  await git.commit("Omniscient Applied automated fixes");
+  await git.commit("[AI-AGENT] Omniscient Applied automated fixes");
+
+  // The clone already has an "origin" remote — update it with the authenticated URL for push
+  const token = process.env.GITHUB_TOKEN;
+  const authedUrl = repoUrl.replace("https://", `https://${token}@`);
+  await git.remote(["set-url", "origin", authedUrl]);
+
+  await git.push("origin", branchName);
+  console.log(`✅ Pushed branch "${branchName}" to GitHub.`);
 }
