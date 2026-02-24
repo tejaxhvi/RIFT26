@@ -1,6 +1,0 @@
-omniscient.tejsv.tech {
-
-  handle_path / {
-    reverse_proxy localhost:3000
-  }
-}
