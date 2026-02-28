@@ -6,7 +6,7 @@
 
 | | URL |
 |---|---|
-| **Live App** | _`<YOUR_DEPLOYMENT_URL>`_ |
+| **Live App** | _`omniscient.tejsv.tech`_ |
 | **LinkedIn Demo** | _`<YOUR_LINKEDIN_VIDEO_URL>`_ |
 
 ---
@@ -18,7 +18,7 @@ graph TD
     A["👤 User (React Dashboard)"] -->|"repoUrl, teamName, leaderName"| B["POST /api/run"]
     B --> C["LangGraph Agent Pipeline"]
 
-    subgraph C["LangGraph Agent Pipeline"]
+    subgraph C["Groq Agent Pipeline"]
         direction TB
         D["1. Setup Node\n(git clone → ./tmp/)"] --> E["2. Analyzer Node\n(LLM scans repo structure)"]
         E --> F["3. Test Node\n(dynamic install + test cmd)"]
@@ -43,7 +43,7 @@ graph TD
 
 **Pipeline Flow:**
 
-1. **Setup** — Clones the target repo into `./tmp/TEAM_NAME_<timestamp>/`
+1. **Setup** — Clones the target repo into `./tmp/TEAM_NAME_LEADER_NAME_AI_Fix/`
 2. **Analyze** — LLM inspects the file tree to determine language, install command, test command, and test quality score
 3. **Test** — Dynamically runs the detected test command
 4. **Fix** — If tests fail, the LLM reads error logs + file structure and rewrites the broken file
@@ -65,7 +65,7 @@ graph TD
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<your-org>/RIFT26.git
+git clone https://github.com/tejaxhvi/RIFT26.git
 cd RIFT26
 
 # 2. Install dependencies
