@@ -69,23 +69,8 @@ export default function DashboardUI() {
 
   return (
     <main className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between border-b pb-4">
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Activity className="h-8 w-8 text-primary" />
-          Omniscient Agent
-        </h1>
-        {/* 🆕 Dynamic Badge Coloring based on NO_TESTS status */}
-        <Badge 
-          variant={agentData?.status === "PASSED" ? "default" : agentData?.status === "NO_TESTS" ? "secondary" : "destructive"} 
-          className={agentData?.status === "NO_TESTS" ? "bg-yellow-500 text-black hover:bg-yellow-400" : "text-sm"}
-        >
-          Status: {isRunning ? "Running..." : agentData?.status || "Idle"}
-        </Badge>
-      </div>
-
-      <div className="flex mx-auto w-full">
+      <div className="flex w-full">
         
-        {/* Left Column: Controller */}
         <div className="md:col-span-4 space-y-6">
           <Card>
             <CardHeader>

@@ -44,16 +44,7 @@ export default function Results() {
 
   return (
       <main className="container mx-auto p-6 space-y-6">
-    <div className="flex items-center justify-between border-b pb-4">
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Activity className="h-8 w-8 text-primary" />
-          Omniscient Agent
-        </h1>
-        <Badge variant={agentData?.status === "PASSED" ? "default" : "outline"} className="text-sm">
-          Status: {isRunning ? "Running..." : agentData?.status || "Idle"}
-        </Badge>
-      </div>
-    <div className="md:col-span-8 space-y-6">
+      <div className="md:col-span-8 space-y-6">
           
     {/* 🆕 Changed to 3 Columns to fit the Analyzer Report */}
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
