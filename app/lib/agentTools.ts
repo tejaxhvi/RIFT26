@@ -1,10 +1,7 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import simpleGit, { SimpleGit } from "simple-git";
 import fs from "fs/promises";
 import path from "path";
-
-const execAsync = promisify(exec);
 
 // 1. Clones to your local ./tmp folder
 export async function cloneRepository(repoUrl: string, teamName: string): Promise<string> {
@@ -45,24 +42,104 @@ export async function getRepoStructure(dir: string, depth = 0, maxDepth = 4): Pr
 }
 
 // 3. 🔄 Dynamic Executor (Runs whatever the Analyzer tells it to)
-export async function runTests(repoPath: string, installCmd: string, testCmd: string): Promise<{ passed: boolean; output: string }> {
-  try {
-    if (installCmd && installCmd.toLowerCase() !== "none") {
-      console.log(`Installing dependencies: ${installCmd}`);
-      await execAsync(installCmd, { cwd: repoPath });
-    }
+type LogEntry = { stream: "stdout" | "stderr"; line: string };
 
-    console.log(`Running tests: ${testCmd}`);
-    const { stdout, stderr } = await execAsync(testCmd, {
-      cwd: repoPath,
-      env: { ...process.env, CI: "true" }
+function splitAndEmit(
+  text: string,
+  carry: { buf: string },
+  emit: (entry: LogEntry) => void,
+  stream: LogEntry["stream"]
+) {
+  carry.buf += text;
+  const parts = carry.buf.split(/\r?\n/);
+  carry.buf = parts.pop() || "";
+
+  for (const line of parts) {
+    // Ignore completely empty "lines" so logs don't explode on frequent newlines.
+    if (line.length === 0) continue;
+    emit({ stream, line });
+  }
+}
+
+async function runCommandStreaming(opts: {
+  command: string;
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  onLog?: (entry: LogEntry) => void;
+}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const { command, cwd, env, onLog } = opts;
+
+  const child = spawn(command, { cwd, env: env ?? process.env, shell: true });
+
+  const stdoutCarry = { buf: "" };
+  const stderrCarry = { buf: "" };
+  let stdout = "";
+  let stderr = "";
+
+  await new Promise<void>((resolve, reject) => {
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      if (onLog) splitAndEmit(text, stdoutCarry, onLog, "stdout");
     });
 
-    return { passed: true, output: stdout };
-  } catch (error: any) {
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      if (onLog) splitAndEmit(text, stderrCarry, onLog, "stderr");
+    });
+
+    child.on("error", (err) => reject(err));
+
+    child.on("close", () => {
+      // Emit remaining partial lines (if any).
+      if (onLog) {
+        if (stdoutCarry.buf.length > 0) onLog({ stream: "stdout", line: stdoutCarry.buf });
+        if (stderrCarry.buf.length > 0) onLog({ stream: "stderr", line: stderrCarry.buf });
+      }
+      resolve();
+    });
+  });
+
+  return { exitCode: child.exitCode ?? 0, stdout, stderr };
+}
+
+export async function runTests(
+  repoPath: string,
+  installCmd: string,
+  testCmd: string,
+  onLog?: (entry: LogEntry) => void
+): Promise<{ passed: boolean; output: string }> {
+  const env = { ...process.env, CI: "true" };
+
+  const installResult = async () => {
+    if (installCmd && installCmd.toLowerCase() !== "none") {
+      console.log(`Installing dependencies: ${installCmd}`);
+      const result = await runCommandStreaming({ command: installCmd, cwd: repoPath, env, onLog });
+      return result;
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+
+  try {
+    await installResult();
+
+    console.log(`Running tests: ${testCmd}`);
+    const testResult = await runCommandStreaming({ command: testCmd, cwd: repoPath, env, onLog });
+
+    if (testResult.exitCode === 0) {
+      return { passed: true, output: testResult.stdout };
+    }
+
     return {
       passed: false,
-      output: (error.stdout || "") + "\n" + (error.stderr || "")
+      output: testResult.stdout + "\n" + testResult.stderr,
+    };
+  } catch (error: unknown) {
+    const err = error as { stdout?: unknown; stderr?: unknown } | undefined;
+    return {
+      passed: false,
+      output: (err?.stdout ? String(err.stdout) : "") + "\n" + (err?.stderr ? String(err.stderr) : ""),
     };
   }
 }

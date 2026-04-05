@@ -1,15 +1,12 @@
 "use client"
 
-import { useState } from "react";
-import { Play, Activity, AlertTriangle } from "lucide-react"; // 🆕 Added AlertTriangle
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { AlertTriangle } from "lucide-react"; // 🆕 Added AlertTriangle
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { FixesTable } from "@/app/components/dashboard/FixesTable";
+import type { FixRecord } from "@/app/components/dashboard/FixesTable";
 
-type AgentData = {
+export type AgentData = {
   status: string;
   summary: {
     repoUrl: string;
@@ -31,17 +28,10 @@ type AgentData = {
     efficiencyPenalty: number;
     final: number;
   };
-  fixes: Array<any>;
+  fixes: FixRecord[];
 };
 
-
-
-export default function Results() {
-
-  const [agentData, setAgentData] = useState<AgentData | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-
-
+export default function Results({ agentData }: { agentData: AgentData | null }) {
   return (
       <main className="container mx-auto p-6 space-y-6">
       <div className="md:col-span-8 space-y-6">

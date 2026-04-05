@@ -22,10 +22,11 @@ export async function POST(request: Request) {
 
     // // In a real app you would set a session / JWT cookie here.
     // return NextResponse.json({ success: true }, { status: 200 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Login API error:", error);
+    const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json(
-      { success: false, message: error.message || "Internal Server Error" },
+      { success: false, message },
       { status: 500 }
     );
   }

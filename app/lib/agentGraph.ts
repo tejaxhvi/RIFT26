@@ -3,8 +3,8 @@ import { ChatGroq } from "@langchain/groq";
 import { z } from "zod";
 import { cloneRepository, getRepoStructure, runTests, applyFix, commitAndPush } from "./agentTools";
 import { FixRecord } from "@/app/components/dashboard/FixesTable";
+import type { ProgressEvent } from "@/app/lib/progressStore";
 
-// 1. Expanded State Memory
 const AgentState = Annotation.Root({
     repoUrl: Annotation<string>(),
     teamName: Annotation<string>(),
@@ -46,13 +46,25 @@ const FixSchema = z.object({
 const structuredLlm = llm.withStructuredOutput(FixSchema, { name: "generate_fix" });
 
 // 4. Graph Nodes
-async function setupNode(state: typeof AgentState.State) {
+type WriterLike = { writer?: (payload: unknown) => void };
+
+function emitCustom(config: unknown, payload: ProgressEvent) {
+  // LangGraph provides `config.writer` when we enabled `streamMode: ["custom"]`.
+  const writer = (config as WriterLike | null | undefined)?.writer;
+  if (typeof writer === "function") {
+    writer(payload);
+  }
+}
+
+async function setupNode(state: typeof AgentState.State, config: unknown) {
+  emitCustom(config, { type: "stage", stage: "setup", message: "Cloning repository..." });
     const repoPath = await cloneRepository(state.repoUrl, state.teamName);
     return { repoPath };
 }
 
 // 🆕 The New Analyzer Agent
-async function analyzeNode(state: typeof AgentState.State) {
+async function analyzeNode(state: typeof AgentState.State, config: unknown) {
+  emitCustom(config, { type: "stage", stage: "analyze", message: "Analyzing repository structure..." });
     console.log("Analyzing repository structure...");
     const structure = await getRepoStructure(state.repoPath);
 
@@ -66,6 +78,12 @@ async function analyzeNode(state: typeof AgentState.State) {
     const analysis = await analyzeLlm.invoke(prompt);
     console.log(`[Analyzer] Language: ${analysis.language} | Test Cmd: ${analysis.testCmd}`);
 
+  emitCustom(config, {
+    type: "log",
+    stream: "system",
+    line: `Analyzer decided: install="${analysis.installCmd}", test="${analysis.testCmd}", testScore=${analysis.testScore}`,
+  });
+
     return {
         repoStructure: structure,
         installCmd: analysis.installCmd,
@@ -74,18 +92,30 @@ async function analyzeNode(state: typeof AgentState.State) {
     };
 }
 
-async function testNode(state: typeof AgentState.State) {
-    const testResult = await runTests(state.repoPath, state.installCmd, state.testCmd);
+async function testNode(state: typeof AgentState.State, config: unknown) {
+    emitCustom(config, { type: "stage", stage: "test", message: "Installing (if needed) and running tests..." });
+
+    const testResult = await runTests(state.repoPath, state.installCmd, state.testCmd, (entry) => {
+      emitCustom(config, { type: "log", stream: entry.stream, line: entry.line });
+    });
 
     if (testResult.passed) {
+        emitCustom(config, { type: "log", stream: "system", line: "✅ Tests passed" });
         return { finalStatus: "PASSED", errorLog: "" };
     } else {
+        emitCustom(config, { type: "log", stream: "system", line: "❌ Tests failed. Capturing output for the fixer..." });
         return { finalStatus: "FAILED", errorLog: testResult.output, iterations: 1 };
     }
 }
 
-async function fixNode(state: typeof AgentState.State) {
+async function fixNode(state: typeof AgentState.State, config: unknown) {
     console.log(`Analyzing failure (Iteration ${state.iterations})...`);
+    emitCustom(config, {
+      type: "stage",
+      stage: "fix",
+      message: `Applying fix (iteration ${state.iterations})...`,
+      iteration: state.iterations,
+    });
 
     const prompt = `
     You are an expert autonomous CI/CD DevOps Agent. 
@@ -103,6 +133,12 @@ async function fixNode(state: typeof AgentState.State) {
     const fixDecision = await structuredLlm.invoke(prompt);
     await applyFix(state.repoPath, fixDecision.file, fixDecision.newCode);
 
+    emitCustom(config, {
+      type: "log",
+      stream: "system",
+      line: `Fix applied: ${fixDecision.file} (${fixDecision.bugType}) at line ${fixDecision.line}`,
+    });
+
     return {
         fixes: [{ id: Date.now(), file: fixDecision.file, type: fixDecision.bugType, line: fixDecision.line, commit: fixDecision.commitMsg, status: "Fixed" }]
     };
@@ -114,7 +150,8 @@ function shouldContinue(state: typeof AgentState.State) {
     return "fixNode";
 }
 
-async function commitNode(state: typeof AgentState.State) {
+async function commitNode(state: typeof AgentState.State, config: unknown) {
+    emitCustom(config, { type: "stage", stage: "commit", message: "Committing and pushing branch..." });
     const branchName = `${state.teamName.replace(/\s+/g, "_").toUpperCase()}_${state.leaderName.replace(/\s+/g, "_").toUpperCase()}_AI_Fix`;
     await commitAndPush(state.repoUrl, state.repoPath, branchName);
     return { finalStatus: state.finalStatus };
